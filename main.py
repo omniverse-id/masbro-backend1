@@ -130,4 +130,53 @@ async def chat_vision(request: ChatRequest):
         main_content = completion.choices[0].message.content
         
         if reasoning_content:
-            full_response = f"**Thinking Process:**\n
+            # FIX: Menggunakan triple quotes """ untuk f-string multi-line
+            full_response = f"""**Thinking Process:**
+```
+{reasoning_content}
+```
+
+**Final Answer:**
+{main_content}"""
+        else:
+            full_response = main_content
+        
+        return {"text": full_response}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Groq Vision API error: {e}")
+
+# --- ENDPOINT: SPEECH TO TEXT (/api/transcribe) ---
+
+@app.post("/api/transcribe")
+async def transcribe_audio(
+    file: UploadFile = File(...), 
+    model: str = "whisper-large-v3-turbo"
+):
+    if not GROQ_CLIENT:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Groq client not ready. Check API Key.")
+    
+    if not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File audio harus diunggah.")
+
+    try:
+        audio_bytes = await file.read()
+        audio_stream = io.BytesIO(audio_bytes)
+        audio_stream.name = file.filename
+
+        transcription = GROQ_CLIENT.audio.transcriptions.create(
+            file=audio_stream,
+            model=model,
+            response_format="text",
+        )
+        
+        return {"text": transcription}
+
+    except Exception as e:
+        print(f"Error during transcription: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Gagal memproses file transkripsi: {e}")
+
+# --- HEALTH CHECK ---
+
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "FastAPI Groq Backend is fully integrated and running. CORS enabled."}
