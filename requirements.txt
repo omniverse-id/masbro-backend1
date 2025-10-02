@@ -1,8 +1,8 @@
 # requirements.txt
 fastapi
-uvicorn[standard]
+uvicorn
 groq
 python-dotenv
 sse-starlette
 pydantic
-python-multipart # Untuk menangani file upload
+python-multipart
