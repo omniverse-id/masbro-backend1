@@ -8,9 +8,9 @@ from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from groq import Groq
 from groq.types.chat import ChatCompletionMessageParam
-from groq.types.shared_types import Content
+# Hapus import yang menyebabkan crash, ganti dengan typing.Any untuk kompatibilitas:
+from typing import Literal, List, Optional, Any 
 from pydantic import BaseModel, Field
-from typing import Literal, List, Optional
 
 # 1. Muat variabel lingkungan
 load_dotenv()
