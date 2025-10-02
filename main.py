@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from groq import Groq
-from groq.types.chat import ChatCompletionMessageParam, Content
+from groq.types.chat import ChatCompletionMessageParam
+from groq.types.shared_types import Content
 from pydantic import BaseModel, Field
 from typing import Literal, List, Optional
 
