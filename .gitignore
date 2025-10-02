@@ -1,0 +1,15 @@
+# .gitignore
+# Dependencies
+__pycache__/
+*.pyc
+
+# Environment
+.env
+venv/
+
+# Python
+.Python
+.ipynb_checkpoints
+*.mypy_cache
+*.pytest_cache
+*.pylintrc
