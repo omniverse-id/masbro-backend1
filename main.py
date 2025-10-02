@@ -1,29 +1,20 @@
-# main.py
-import os
-import json
-from dotenv import load_dotenv
-from fastapi import FastAPI, Request, status, UploadFile, File, Form, HTTPException, Depends
+import asyncio
+import time
+from typing import List, Literal, AsyncGenerator
+
+from fastapi import FastAPI, HTTPException, status, UploadFile, File
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from sse_starlette.sse import EventSourceResponse
-from groq import Groq
-from groq.types.chat import ChatCompletionMessageParam
-# Hapus import yang menyebabkan crash, ganti dengan typing.Any untuk kompatibilitas:
-from typing import Literal, List, Optional, Any 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-# 1. Muat variabel lingkungan
-load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-# 2. Inisialisasi FastAPI
 app = FastAPI(
-    title="Groq Full API Capabilities Backend",
-    description="Backend FastAPI mencakup Chat, Vision, Speech-to-Text, Structured Output, Files, dan Fine-Tuning."
+    title="Masbro/Systa AI Backend",
+    description="FastAPI backend untuk layanan Chatbot dan Transkripsi Audio.",
+    version="1.0.0"
 )
 
-# 3. Konfigurasi CORS
-origins = ["http://localhost:3000"] 
+origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -32,155 +23,80 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 4. Inisialisasi Groq Client
-if not GROQ_API_KEY:
-    print("WARNING: GROQ_API_KEY tidak ditemukan. Harap atur di file .env")
-    groq_client = None
-else:
-    try:
-        groq_client = Groq(api_key=GROQ_API_KEY)
-    except Exception as e:
-        print(f"Error saat inisialisasi Groq client: {e}")
-        groq_client = None
+Role = Literal['user', 'assistant', 'system']
 
-# Dependency Injection untuk Client
-def get_groq_client():
-    """Helper untuk mendapatkan client dan menangani error jika tidak terinisialisasi."""
-    if not groq_client:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Server API key not configured or failed to initialize."
-        )
-    return groq_client
+class ApiMessage(BaseModel):
+    role: Role
+    content: str
+
+class ChatRequest(BaseModel):
+    messages: List[ApiMessage]
+    model: str
+
+async def chat_generator(user_prompt: str, model_id: str) -> AsyncGenerator[str, None]:
+    
+    response_text = (
+        f"Halo! Saya adalah {model_id.split('/')[-1]} yang Anda pilih. "
+        f"Backend Anda sekarang mengizinkan CORS. Anda bertanya: '{user_prompt}'.\n\n"
+        "Integrasi streaming berhasil! "
+        "Anda dapat mengganti logika ini dengan panggilan API LLM Anda yang sebenarnya "
+        "menggunakan SDK Groq atau lainnya."
+    )
+
+    for chunk in response_text.split(" "):
+        yield chunk + " "
+        await asyncio.sleep(0.03)
+        
+    yield "\n\n--- Streaming Selesai ---"
 
 
-# ----------------------------------------------------
-# I. CHAT, VISION, & STRUCTURED OUTPUT (Sudah ada di jawaban sebelumnya)
-# ----------------------------------------------------
+@app.post("/api/chat", response_class=StreamingResponse)
+async def chat_endpoint(request: ChatRequest):
+    
+    user_prompt = next((msg.content for msg in reversed(request.messages) if msg.role == 'user'), "Tidak ada prompt ditemukan.")
+    
+    if not request.model:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Model ID tidak boleh kosong.")
 
-# (Kode untuk /api/chat, /api/chat-vision, /api/structured-chat, /api/transcribe, /api/models, /api/usage ditiadakan di sini untuk menghemat ruang, tetapi *asumsikan* itu ada di file lengkap Anda.)
+    return StreamingResponse(chat_generator(user_prompt, request.model), media_type="text/plain")
 
-# Model Pydantic untuk Structured Output (Contoh)
-class ExtractedData(BaseModel):
-    product_name: str
-    rating: float
-    sentiment: Literal["positive", "negative", "neutral"]
-    key_features: List[str]
 
-# ----------------------------------------------------
-# II. FILE MANAGEMENT (Prasyarat Fine-Tuning)
-# ----------------------------------------------------
-
-@app.post("/api/files")
-async def upload_file_for_fine_tuning(
-    file: UploadFile = File(...),
-    purpose: str = Form("fine-tune"), # Groq API mungkin memerlukan tujuan
-    client: Groq = Depends(get_groq_client)
+@app.post("/api/transcribe")
+async def transcribe_audio(
+    file: UploadFile = File(...), 
+    model: str = "whisper-large-v3-turbo"
 ):
-    """
-    Meng-*upload* file (misalnya JSONL) untuk digunakan dalam fine-tuning.
-    Ref: /files (Tidak ada di referensi Anda, tetapi merupakan prasyarat)
-    """
+    
+    if not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File audio harus diunggah.")
+    
+    allowed_mime_types = ["audio/mpeg", "audio/wav", "audio/flac", "audio/m4a"]
+    if file.content_type not in allowed_mime_types:
+        
+        if not file.filename.lower().endswith(('.mp3', '.wav', '.flac', '.m4a')):
+             raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Tipe file audio tidak didukung ({file.content_type}). Harap unggah MP3, WAV, FLAC, atau M4A."
+            )
+
     try:
-        groq_file = client.files.create(
-            file=file.file,
-            purpose=purpose
+        
+        file_contents = await file.read()
+        file_size_kb = len(file_contents) / 1024
+        
+        simulated_text = (
+            f"Transkripsi audio berhasil menggunakan {model}. "
+            f"File: {file.filename} ({file_size_kb:.2f} KB). "
+            "Teks simulasi: 'Backend Anda sekarang siap menerima file audio untuk transkripsi.'"
         )
-        return JSONResponse(content=groq_file.model_dump(), status_code=status.HTTP_201_CREATED)
+
+        return {"text": simulated_text}
+
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Gagal upload file: {str(e)}")
+        print(f"Error during transcription: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Gagal memproses file transkripsi.")
 
-@app.get("/api/files")
-async def list_files(client: Groq = Depends(get_groq_client)):
-    """Melihat semua file yang telah di-*upload*."""
-    try:
-        files = client.files.list()
-        return {"files": [f.model_dump() for f in files.data]}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Gagal mengambil daftar file: {str(e)}")
-
-@app.delete("/api/files/{file_id}")
-async def delete_file(file_id: str, client: Groq = Depends(get_groq_client)):
-    """Menghapus file berdasarkan ID."""
-    try:
-        result = client.files.delete(file_id)
-        return {"id": file_id, "deleted": result.deleted}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Gagal menghapus file: {str(e)}")
-
-# ----------------------------------------------------
-# III. FINE TUNING MANAGEMENT
-# ----------------------------------------------------
-
-class FineTuningCreate(BaseModel):
-    """Skema untuk request POST /fine_tunings"""
-    input_file_id: str = Field(description="ID dari file yang telah di-*upload*.")
-    name: str = Field(description="Nama untuk model fine-tuning ini.")
-    base_model: str = Field(description="Model dasar (base model) yang akan di-fine tune.")
-    type: Literal["lora"] = Field("lora", description="Jenis fine-tuning, saat ini hanya 'lora'.")
-
-@app.post("/api/fine_tunings")
-async def create_fine_tuning_job(
-    job_data: FineTuningCreate,
-    client: Groq = Depends(get_groq_client)
-):
-    """
-    Membuat pekerjaan fine-tuning baru.
-    Ref: POST /fine_tunings
-    """
-    try:
-        job = client.fine_tunings.create(
-            input_file_id=job_data.input_file_id,
-            name=job_data.name,
-            base_model=job_data.base_model,
-            type=job_data.type
-        )
-        return JSONResponse(content=job.model_dump(), status_code=status.HTTP_201_CREATED)
-    except Exception as e:
-        # Menangkap error jika file_id tidak valid, base_model salah, dll.
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Gagal membuat pekerjaan fine-tuning: {str(e)}")
-
-@app.get("/api/fine_tunings")
-async def list_fine_tuning_jobs(client: Groq = Depends(get_groq_client)):
-    """
-    Melihat semua pekerjaan fine-tuning yang pernah dibuat.
-    Ref: GET /fine_tunings
-    """
-    try:
-        jobs = client.fine_tunings.list()
-        return {"jobs": [job.model_dump() for job in jobs.data]}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Gagal mengambil daftar fine-tuning: {str(e)}")
-
-@app.get("/api/fine_tunings/{job_id}")
-async def get_fine_tuning_job(job_id: str, client: Groq = Depends(get_groq_client)):
-    """
-    Mengambil status detail pekerjaan fine-tuning tertentu.
-    Ref: GET /fine_tunings/{id}
-    """
-    try:
-        job = client.fine_tunings.get(job_id)
-        return job.model_dump()
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Gagal mengambil detail fine-tuning {job_id}: {str(e)}")
-
-@app.delete("/api/fine_tunings/{job_id}")
-async def delete_fine_tuning_job(job_id: str, client: Groq = Depends(get_groq_client)):
-    """
-    Menghapus pekerjaan fine-tuning tertentu.
-    Ref: DELETE /fine_tunings/{id}
-    """
-    try:
-        result = client.fine_tunings.delete(job_id)
-        return {"id": job_id, "deleted": result.deleted}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Gagal menghapus fine-tuning {job_id}: {str(e)}")
-
-# ----------------------------------------------------
-# HEALTH CHECK
-# ----------------------------------------------------
 
 @app.get("/")
 def read_root():
-    """Endpoint sederhana untuk memeriksa apakah server berjalan."""
-    return {"status": "ok", "message": "Groq Full API Capabilities Backend berjalan dengan baik."}
+    return {"status": "ok", "message": "FastAPI Vercel Backend (with CORS enabled) is running."}
