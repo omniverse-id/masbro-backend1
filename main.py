@@ -68,6 +68,11 @@ async def chat_generator(messages: List[ApiMessage], model_id: str, reasoning_ef
 
         for chunk in stream:
             content = chunk.choices[0].delta.content
+<<<<<<< HEAD
+=======
+            # Pada streaming Groq, konten reasoning untuk GPT-OSS biasanya 
+            # digabungkan ke 'content'. Kita hanya mengeluarkan konten.
+>>>>>>> 4502fff5e78c8b0c5abbb4ce395c542692f12c30
             if content:
                 yield content
                 
@@ -92,9 +97,17 @@ async def chat_vision(request: ChatRequest):
         "messages": groq_messages,
         "model": request.model,
         "stream": False,
+<<<<<<< HEAD
         "include_reasoning": is_gpt_oss
     }
 
+=======
+        # Menambahkan include_reasoning=True jika model adalah GPT-OSS
+        "include_reasoning": is_gpt_oss
+    }
+
+    # Menambahkan reasoning_effort jika disediakan
+>>>>>>> 4502fff5e78c8b0c5abbb4ce395c542692f12c30
     if request.reasoning_effort:
         groq_params["reasoning_effort"] = request.reasoning_effort
         
@@ -104,6 +117,7 @@ async def chat_vision(request: ChatRequest):
         main_content = completion.choices[0].message.content
         reasoning_content = None
         
+<<<<<<< HEAD
         if is_gpt_oss and completion.choices[0].message:
             raw_reasoning = getattr(completion.choices[0].message, 'reasoning', None)
             
@@ -112,3 +126,14 @@ async def chat_vision(request: ChatRequest):
         
         if reasoning_content:
             full_response = f"""**Thinking Process:**
+=======
+        # LOGIKA BARU: Ekstraksi reasoning khusus untuk GPT-OSS (non-streaming)
+        if is_gpt_oss and completion.choices[0].message:
+            # Menggunakan getattr untuk akses aman ke atribut 'reasoning'
+            reasoning_content = getattr(completion.choices[0].message, 'reasoning', None)
+        
+        # Menggabungkan reasoning (jika ada) dan konten utama
+        if reasoning_content:
+            # Format Markdown untuk Reasoning Card di frontend
+            full_response = f"""**Thinking Process:**
+>>>>>>> 4502fff5e78c8b0c5abbb4ce395c542692f12c30
