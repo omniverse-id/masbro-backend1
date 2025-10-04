@@ -2,14 +2,12 @@ import os
 import io
 import json
 from typing import List, Literal, AsyncGenerator, Union, Dict, Any, Optional
-
 from fastapi import FastAPI, HTTPException, status, UploadFile, File
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from groq import Groq
 
-# --- INICIALISASI GROQ & FASTAPI ---
 try:
     GROQ_CLIENT = Groq()
 except Exception:
@@ -21,7 +19,6 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# --- KONFIGURASI CORS ---
 origins = ["*"]
 
 app.add_middleware(
@@ -32,31 +29,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- SKEMA DATA Pydantic (FIX 422 ERROR) ---
 Role = Literal['user', 'assistant', 'system']
 ReasoningEffort = Literal['none', 'default', 'low', 'medium', 'high']
 
 class ApiMessage(BaseModel):
     role: Role
-    # FIX: Mengizinkan string (teks) ATAU List of Dictionaries (multimodal)
     content: Union[str, List[Dict[str, Any]]]
 
 class ChatRequest(BaseModel):
     messages: List[ApiMessage]
     model: str
-    # BARU: Menambahkan parameter reasoning_effort (optional)
     reasoning_effort: Optional[ReasoningEffort] = None
-# ----------------------------------------
 
-# --- FUNGSI UTILITY ---
 def format_messages_for_groq(messages: List[ApiMessage]) -> List[Dict[str, Any]]:
     groq_messages = []
     for msg in messages:
-        # Pydantic sudah memastikan msg.content adalah str atau List[Dict]
         groq_messages.append({"role": msg.role, "content": msg.content})
     return groq_messages
-
-# --- ENDPOINT UTAMA: CHAT STREAMING (/api/chat) ---
 
 async def chat_generator(messages: List[ApiMessage], model_id: str, reasoning_effort: Optional[ReasoningEffort]) -> AsyncGenerator[str, None]:
     if not GROQ_CLIENT:
@@ -65,29 +54,20 @@ async def chat_generator(messages: List[ApiMessage], model_id: str, reasoning_ef
 
     groq_messages = format_messages_for_groq(messages)
     
-    # Menyiapkan parameter API Groq
     groq_params = {
         "messages": groq_messages,
         "model": model_id,
         "stream": True,
     }
 
-    # BARU: Menambahkan reasoning_effort jika disediakan
     if reasoning_effort:
         groq_params["reasoning_effort"] = reasoning_effort
 
     try:
-        # Memanggil Groq API dengan parameter yang dimodifikasi
         stream = GROQ_CLIENT.chat.completions.create(**groq_params)
 
         for chunk in stream:
             content = chunk.choices[0].delta.content
-            # BARU: Menambahkan logika untuk menangani 'reasoning' (khusus GPT-OSS)
-            # Catatan: Konten reasoning biasanya muncul di akhir non-streaming atau di field terpisah.
-            # Pada streaming Groq, konten reasoning untuk GPT-OSS akan muncul di 'reasoning' field
-            # jika stream=False, tetapi saat stream=True (seperti di sini), reasoning biasanya 
-            # digabungkan ke 'content' (sebagai <think> atau bagian dari output).
-            # Kita hanya mengeluarkan konten.
             if content:
                 yield content
                 
@@ -97,10 +77,7 @@ async def chat_generator(messages: List[ApiMessage], model_id: str, reasoning_ef
 
 @app.post("/api/chat", response_class=StreamingResponse)
 async def chat_endpoint(request: ChatRequest):
-    # Mengirimkan parameter baru ke chat_generator
     return StreamingResponse(chat_generator(request.messages, request.model, request.reasoning_effort), media_type="text/plain")
-
-# --- ENDPOINT: IMAGE & VISION (/api/chat-vision) ---
 
 @app.post("/api/chat-vision")
 async def chat_vision(request: ChatRequest):
@@ -108,75 +85,30 @@ async def chat_vision(request: ChatRequest):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Groq client not ready. Check API Key.")
         
     groq_messages = format_messages_for_groq(request.messages)
+    
+    is_gpt_oss = "gpt-oss" in request.model.lower()
         
-    # Menyiapkan parameter API Groq untuk Vision (Non-Streaming)
     groq_params = {
         "messages": groq_messages,
         "model": request.model,
         "stream": False,
+        "include_reasoning": is_gpt_oss
     }
 
-    # BARU: Menambahkan reasoning_effort jika disediakan (Vision biasanya tidak streaming)
     if request.reasoning_effort:
         groq_params["reasoning_effort"] = request.reasoning_effort
         
     try:
         completion = GROQ_CLIENT.chat.completions.create(**groq_params)
         
-        # Untuk GPT-OSS, reasoning mungkin ada di field 'reasoning'
-        reasoning_content = completion.choices[0].message.reasoning or ""
-        
-        # Menggabungkan reasoning (jika ada) dan konten utama
         main_content = completion.choices[0].message.content
+        reasoning_content = None
+        
+        if is_gpt_oss and completion.choices[0].message:
+            raw_reasoning = getattr(completion.choices[0].message, 'reasoning', None)
+            
+            if raw_reasoning and isinstance(raw_reasoning, str):
+                reasoning_content = raw_reasoning
         
         if reasoning_content:
-            # FIX: Menggunakan triple quotes """ untuk f-string multi-line
             full_response = f"""**Thinking Process:**
-```
-{reasoning_content}
-```
-
-**Final Answer:**
-{main_content}"""
-        else:
-            full_response = main_content
-        
-        return {"text": full_response}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Groq Vision API error: {e}")
-
-# --- ENDPOINT: SPEECH TO TEXT (/api/transcribe) ---
-
-@app.post("/api/transcribe")
-async def transcribe_audio(
-    file: UploadFile = File(...), 
-    model: str = "whisper-large-v3-turbo"
-):
-    if not GROQ_CLIENT:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Groq client not ready. Check API Key.")
-    
-    if not file.filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File audio harus diunggah.")
-
-    try:
-        audio_bytes = await file.read()
-        audio_stream = io.BytesIO(audio_bytes)
-        audio_stream.name = file.filename
-
-        transcription = GROQ_CLIENT.audio.transcriptions.create(
-            file=audio_stream,
-            model=model,
-            response_format="text",
-        )
-        
-        return {"text": transcription}
-
-    except Exception as e:
-        print(f"Error during transcription: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Gagal memproses file transkripsi: {e}")
-
-# --- HEALTH CHECK ---
-
-@app.get("/")
-def read_root():
-    return {"status": "ok", "message": "FastAPI Groq Backend is fully integrated and running. CORS enabled."}
