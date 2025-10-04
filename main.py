@@ -11,9 +11,7 @@ from groq import Groq
 # --- INICIALISASI GROQ & FASTAPI ---
 try:
     GROQ_CLIENT = Groq()
-except Exception as e:
-    # Perbaikan: Tambahkan logging di sini. Ini akan muncul di log Vercel.
-    print(f"Error initializing Groq client: {e}")
+except Exception:
     GROQ_CLIENT = None
 
 app = FastAPI(
@@ -96,13 +94,15 @@ async def chat_vision(request: ChatRequest):
         
     groq_messages = format_messages_for_groq(request.messages)
     
+    # Deteksi model GPT-OSS untuk mengaktifkan fitur reasoning
     is_gpt_oss = "gpt-oss" in request.model.lower()
         
     groq_params = {
         "messages": groq_messages,
         "model": request.model,
         "stream": False,
-        "include_reasoning": is_gpt_oss
+        # Mengirimkan parameter include_reasoning hanya jika model adalah GPT-OSS
+        "include_reasoning": is_gpt_oss 
     }
 
     if request.reasoning_effort:
@@ -114,11 +114,14 @@ async def chat_vision(request: ChatRequest):
         main_content = completion.choices[0].message.content
         reasoning_content = None
         
+        # LOGIKA AMAN: Ekstraksi reasoning menggunakan getattr untuk menghindari AttributeError
         if is_gpt_oss and completion.choices[0].message:
+            # getattr akan mengembalikan None jika atribut 'reasoning' tidak ada, mencegah crash
             raw_reasoning = getattr(completion.choices[0].message, 'reasoning', None)
             
             if raw_reasoning and isinstance(raw_reasoning, str):
                 reasoning_content = raw_reasoning
         
+        # Menggabungkan output
         if reasoning_content:
             full_response = f"""**Thinking Process:**
