@@ -111,8 +111,10 @@ async def chat_vision(request: ChatRequest):
                 reasoning_content = raw_reasoning
         
         if reasoning_content:
-            # FIX KRITIS: Sanitasi reasoning_content untuk menghilangkan triple backticks
-            # Ini mencegah SyntaxError yang baru saja muncul di Vercel logs
-            reasoning_content_safe = reasoning_content.replace("```", "``")
+            # FIX KRITIS 1: Sanitasi triple quote Python (""") -> Ini MENGHENTIKAN SyntaxError Anda!
+            reasoning_content_safe = reasoning_content.replace('"""', "'''")
+            
+            # FIX KRITIS 2: Sanitasi triple backtick Markdown (```)
+            reasoning_content_safe = reasoning_content_safe.replace("```", "``")
             
             full_response = f"""**Thinking Process:**
