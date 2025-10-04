@@ -111,10 +111,56 @@ async def chat_vision(request: ChatRequest):
                 reasoning_content = raw_reasoning
         
         if reasoning_content:
-            # FIX KRITIS 1: Sanitasi triple quote Python (""") -> Ini MENGHENTIKAN SyntaxError Anda!
-            reasoning_content_safe = reasoning_content.replace('"""', "'''")
+            # FIX KRITIS: Sanitasi dan RAKIT string menggunakan concatenation (penghapusan f"""...""" yang menyebabkan SyntaxError)
             
-            # FIX KRITIS 2: Sanitasi triple backtick Markdown (```)
+            # Sanitasi triple quote Python (""") dan triple backtick Markdown (```)
+            reasoning_content_safe = reasoning_content.replace('"""', "'''")
             reasoning_content_safe = reasoning_content_safe.replace("```", "``")
             
-            full_response = f"""**Thinking Process:**
+            full_response = (
+                "**Thinking Process:**\n"
+                "```\n"
+                f"{reasoning_content_safe}\n"
+                "```\n\n"
+                "**Final Answer:**\n"
+                f"{main_content}"
+            )
+        else:
+            full_response = main_content
+        
+        return {"text": full_response}
+    except Exception as e:
+        print(f"Groq Vision API Error: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Groq Vision API error: {e}")
+
+@app.post("/api/transcribe")
+async def transcribe_audio(
+    file: UploadFile = File(...), 
+    model: str = "whisper-large-v3-turbo"
+):
+    if not GROQ_CLIENT:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Groq client not ready. Check API Key.")
+    
+    if not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File audio harus diunggah.")
+
+    try:
+        audio_bytes = await file.read()
+        audio_stream = io.BytesIO(audio_bytes)
+        audio_stream.name = file.filename
+
+        transcription = GROQ_CLIENT.audio.transcriptions.create(
+            file=audio_stream,
+            model=model,
+            response_format="text",
+        )
+        
+        return {"text": transcription}
+
+    except Exception as e:
+        print(f"Error during transcription: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Gagal memproses file transkripsi: {e}")
+
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "FastAPI Groq Backend is fully integrated and running. CORS enabled."}
