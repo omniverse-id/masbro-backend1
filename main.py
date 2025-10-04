@@ -8,9 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from groq import Groq
 
+# --- INICIALISASI GROQ & FASTAPI ---
 try:
     GROQ_CLIENT = Groq()
-except Exception:
+except Exception as e:
+    # Perbaikan: Tambahkan logging di sini. Ini akan muncul di log Vercel.
+    print(f"Error initializing Groq client: {e}")
     GROQ_CLIENT = None
 
 app = FastAPI(
@@ -19,6 +22,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# --- KONFIGURASI CORS ---
 origins = ["*"]
 
 app.add_middleware(
@@ -29,6 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- SKEMA DATA Pydantic ---
 Role = Literal['user', 'assistant', 'system']
 ReasoningEffort = Literal['none', 'default', 'low', 'medium', 'high']
 
@@ -41,11 +46,14 @@ class ChatRequest(BaseModel):
     model: str
     reasoning_effort: Optional[ReasoningEffort] = None
 
+# --- FUNGSI UTILITY ---
 def format_messages_for_groq(messages: List[ApiMessage]) -> List[Dict[str, Any]]:
     groq_messages = []
     for msg in messages:
         groq_messages.append({"role": msg.role, "content": msg.content})
     return groq_messages
+
+# --- ENDPOINT UTAMA: CHAT STREAMING (/api/chat) ---
 
 async def chat_generator(messages: List[ApiMessage], model_id: str, reasoning_effort: Optional[ReasoningEffort]) -> AsyncGenerator[str, None]:
     if not GROQ_CLIENT:
@@ -68,11 +76,6 @@ async def chat_generator(messages: List[ApiMessage], model_id: str, reasoning_ef
 
         for chunk in stream:
             content = chunk.choices[0].delta.content
-<<<<<<< HEAD
-=======
-            # Pada streaming Groq, konten reasoning untuk GPT-OSS biasanya 
-            # digabungkan ke 'content'. Kita hanya mengeluarkan konten.
->>>>>>> 4502fff5e78c8b0c5abbb4ce395c542692f12c30
             if content:
                 yield content
                 
@@ -83,6 +86,8 @@ async def chat_generator(messages: List[ApiMessage], model_id: str, reasoning_ef
 @app.post("/api/chat", response_class=StreamingResponse)
 async def chat_endpoint(request: ChatRequest):
     return StreamingResponse(chat_generator(request.messages, request.model, request.reasoning_effort), media_type="text/plain")
+
+# --- ENDPOINT: IMAGE & VISION (/api/chat-vision) ---
 
 @app.post("/api/chat-vision")
 async def chat_vision(request: ChatRequest):
@@ -97,17 +102,9 @@ async def chat_vision(request: ChatRequest):
         "messages": groq_messages,
         "model": request.model,
         "stream": False,
-<<<<<<< HEAD
         "include_reasoning": is_gpt_oss
     }
 
-=======
-        # Menambahkan include_reasoning=True jika model adalah GPT-OSS
-        "include_reasoning": is_gpt_oss
-    }
-
-    # Menambahkan reasoning_effort jika disediakan
->>>>>>> 4502fff5e78c8b0c5abbb4ce395c542692f12c30
     if request.reasoning_effort:
         groq_params["reasoning_effort"] = request.reasoning_effort
         
@@ -117,7 +114,6 @@ async def chat_vision(request: ChatRequest):
         main_content = completion.choices[0].message.content
         reasoning_content = None
         
-<<<<<<< HEAD
         if is_gpt_oss and completion.choices[0].message:
             raw_reasoning = getattr(completion.choices[0].message, 'reasoning', None)
             
@@ -126,14 +122,3 @@ async def chat_vision(request: ChatRequest):
         
         if reasoning_content:
             full_response = f"""**Thinking Process:**
-=======
-        # LOGIKA BARU: Ekstraksi reasoning khusus untuk GPT-OSS (non-streaming)
-        if is_gpt_oss and completion.choices[0].message:
-            # Menggunakan getattr untuk akses aman ke atribut 'reasoning'
-            reasoning_content = getattr(completion.choices[0].message, 'reasoning', None)
-        
-        # Menggabungkan reasoning (jika ada) dan konten utama
-        if reasoning_content:
-            # Format Markdown untuk Reasoning Card di frontend
-            full_response = f"""**Thinking Process:**
->>>>>>> 4502fff5e78c8b0c5abbb4ce395c542692f12c30
