@@ -82,12 +82,8 @@ async def chat_generator(messages: List[ApiMessage], model_id: str, reasoning_ef
 
         for chunk in stream:
             content = chunk.choices[0].delta.content
-            # BARU: Menambahkan logika untuk menangani 'reasoning' (khusus GPT-OSS)
-            # Catatan: Konten reasoning biasanya muncul di akhir non-streaming atau di field terpisah.
-            # Pada streaming Groq, konten reasoning untuk GPT-OSS akan muncul di 'reasoning' field
-            # jika stream=False, tetapi saat stream=True (seperti di sini), reasoning biasanya 
-            # digabungkan ke 'content' (sebagai <think> atau bagian dari output).
-            # Kita hanya mengeluarkan konten.
+            # Pada streaming Groq, konten reasoning untuk GPT-OSS biasanya 
+            # digabungkan ke 'content'. Kita hanya mengeluarkan konten.
             if content:
                 yield content
                 
@@ -108,75 +104,34 @@ async def chat_vision(request: ChatRequest):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Groq client not ready. Check API Key.")
         
     groq_messages = format_messages_for_groq(request.messages)
+    
+    is_gpt_oss = "gpt-oss" in request.model.lower()
         
     # Menyiapkan parameter API Groq untuk Vision (Non-Streaming)
     groq_params = {
         "messages": groq_messages,
         "model": request.model,
         "stream": False,
+        # Menambahkan include_reasoning=True jika model adalah GPT-OSS
+        "include_reasoning": is_gpt_oss
     }
 
-    # BARU: Menambahkan reasoning_effort jika disediakan (Vision biasanya tidak streaming)
+    # Menambahkan reasoning_effort jika disediakan
     if request.reasoning_effort:
         groq_params["reasoning_effort"] = request.reasoning_effort
         
     try:
         completion = GROQ_CLIENT.chat.completions.create(**groq_params)
         
-        # Untuk GPT-OSS, reasoning mungkin ada di field 'reasoning'
-        reasoning_content = completion.choices[0].message.reasoning or ""
+        main_content = completion.choices[0].message.content
+        reasoning_content = None
+        
+        # LOGIKA BARU: Ekstraksi reasoning khusus untuk GPT-OSS (non-streaming)
+        if is_gpt_oss and completion.choices[0].message:
+            # Menggunakan getattr untuk akses aman ke atribut 'reasoning'
+            reasoning_content = getattr(completion.choices[0].message, 'reasoning', None)
         
         # Menggabungkan reasoning (jika ada) dan konten utama
-        main_content = completion.choices[0].message.content
-        
         if reasoning_content:
-            # FIX: Menggunakan triple quotes """ untuk f-string multi-line
+            # Format Markdown untuk Reasoning Card di frontend
             full_response = f"""**Thinking Process:**
-```
-{reasoning_content}
-```
-
-**Final Answer:**
-{main_content}"""
-        else:
-            full_response = main_content
-        
-        return {"text": full_response}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Groq Vision API error: {e}")
-
-# --- ENDPOINT: SPEECH TO TEXT (/api/transcribe) ---
-
-@app.post("/api/transcribe")
-async def transcribe_audio(
-    file: UploadFile = File(...), 
-    model: str = "whisper-large-v3-turbo"
-):
-    if not GROQ_CLIENT:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Groq client not ready. Check API Key.")
-    
-    if not file.filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File audio harus diunggah.")
-
-    try:
-        audio_bytes = await file.read()
-        audio_stream = io.BytesIO(audio_bytes)
-        audio_stream.name = file.filename
-
-        transcription = GROQ_CLIENT.audio.transcriptions.create(
-            file=audio_stream,
-            model=model,
-            response_format="text",
-        )
-        
-        return {"text": transcription}
-
-    except Exception as e:
-        print(f"Error during transcription: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Gagal memproses file transkripsi: {e}")
-
-# --- HEALTH CHECK ---
-
-@app.get("/")
-def read_root():
-    return {"status": "ok", "message": "FastAPI Groq Backend is fully integrated and running. CORS enabled."}
